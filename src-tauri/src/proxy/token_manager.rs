@@ -14,7 +14,6 @@ pub struct ProxyToken {
     pub email: String,
     pub account_path: PathBuf,  // 账号文件路径，用于更新
     pub project_id: Option<String>,
-    pub session_id: String,  // sessionId
 }
 
 pub struct TokenManager {
@@ -108,14 +107,10 @@ impl TokenManager {
         let timestamp = token_obj["expiry_timestamp"].as_i64()
             .ok_or("缺少 expiry_timestamp")?;
         
-        // project_id 和 session_id 是可选的
+        // project_id 是可选的
         let project_id = token_obj.get("project_id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let session_id = token_obj.get("session_id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| generate_session_id());
         
         Ok(Some(ProxyToken {
             account_id,
@@ -126,7 +121,6 @@ impl TokenManager {
             email,
             account_path: path.clone(),
             project_id,
-            session_id,
         }))
     }
     
@@ -269,27 +263,7 @@ impl TokenManager {
         Ok(())
     }
     
-    /// 获取当前加载的账号数量
     pub fn len(&self) -> usize {
         self.tokens.len()
     }
-    
-    /// 强制使某个账号的 token 失效（用于 401 错误）
-    #[allow(dead_code)]
-    pub fn invalidate_token(&self, account_id: &str) {
-        if let Some(mut entry) = self.tokens.get_mut(account_id) {
-            entry.timestamp = 0; // 设为 0 会触发下一次加载时的自动刷新
-            tracing::info!("账号已标记为 token 失效，等待下次刷新: {}", account_id);
-        }
-    }
-}
-
-/// 生成 sessionId
-/// 格式：负数大整数字符串
-fn generate_session_id() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    // 生成 1e18 到 9e18 之间的负数
-    let num: i64 = -rng.gen_range(1_000_000_000_000_000_000..9_000_000_000_000_000_000);
-    num.to_string()
 }

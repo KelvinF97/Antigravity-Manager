@@ -73,7 +73,7 @@ dependencies = [
 
 [[package]]
 name = "antigravity_tools"
-version = "3.2.5"
+version = "3.2.6"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -85,6 +85,8 @@ dependencies = [
  "dirs 5.0.1",
  "eventsource-stream",
  "futures",
+ "hyper",
+ "hyper-util",
  "image",
  "once_cell",
  "pin-project",
@@ -2109,6 +2111,7 @@ dependencies = [
  "socket2",
  "system-configuration",
  "tokio",
+ "tower-layer",
  "tower-service",
  "tracing",
  "windows-registry 0.6.1",

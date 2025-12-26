@@ -35,7 +35,7 @@ pub async fn auth_middleware(request: Request, next: Next) -> Result<Response, S
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // 移除未使用的 use super::*;
 
     #[test]
     fn test_auth_placeholder() {

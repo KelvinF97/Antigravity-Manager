@@ -4,6 +4,7 @@ use axum::{
     extract::DefaultBodyLimit,
     response::{IntoResponse, Response, Json},
 };
+use tracing::{debug, error};
 use tower_http::trace::TraceLayer;
 use std::sync::Arc;
 use tokio::sync::oneshot;
@@ -118,7 +119,7 @@ impl AxumServer {
         tracing::info!("反代服务器启动在 http://{}", addr);
         
         // 创建关闭通道
-        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
         
         let server_instance = Self {
             shutdown_tx: Some(shutdown_tx),
@@ -130,12 +131,39 @@ impl AxumServer {
         
         // 在新任务中启动服务器
         let handle = tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    shutdown_rx.await.ok();
-                })
-                .await
-                .ok();
+            use hyper_util::rt::TokioIo;
+            use hyper::server::conn::http1;
+            use hyper_util::service::TowerToHyperService;
+
+            loop {
+                tokio::select! {
+                    res = listener.accept() => {
+                        match res {
+                            Ok((stream, _)) => {
+                                let io = TokioIo::new(stream);
+                                let service = TowerToHyperService::new(app.clone());
+                                
+                                tokio::task::spawn(async move {
+                                    if let Err(err) = http1::Builder::new()
+                                        .serve_connection(io, service)
+                                        .with_upgrades() // 支持 WebSocket (如果以后需要)
+                                        .await
+                                    {
+                                        debug!("连接处理结束或出错: {:?}", err);
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                error!("接收连接失败: {:?}", e);
+                            }
+                        }
+                    }
+                    _ = &mut shutdown_rx => {
+                        tracing::info!("反代服务器停止监听");
+                        break;
+                    }
+                }
+            }
         });
         
         Ok((

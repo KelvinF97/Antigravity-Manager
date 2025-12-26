@@ -97,6 +97,15 @@ pub fn inject_google_search_tool(body: &mut Value) {
     if let Some(obj) = body.as_object_mut() {
         let tools_entry = obj.entry("tools").or_insert_with(|| json!([]));
         if let Some(tools_arr) = tools_entry.as_array_mut() {
+            // [Conflict Fix] Protocol mutual exclusion check
+            // Gemini dictates: Mixing "googleSearch" with "functionDeclarations" is NOT allowed.
+            let has_function_decls = tools_arr.iter().any(|t| t.get("functionDeclarations").is_some());
+            if has_function_decls {
+                // If the user (e.g., Claude Code) has already defined terminal tools,
+                // we MUST NOT inject googleSearch to avoid 400 errors.
+                return;
+            }
+
             let has_search = tools_arr.iter().any(|t| t.get("googleSearch").is_some());
             if !has_search {
                 tools_arr.push(json!({"googleSearch": {}}));

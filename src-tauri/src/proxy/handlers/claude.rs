@@ -27,37 +27,48 @@ pub async fn handle_messages(
 ) -> Response {
     // 获取最新一条“有意义”的消息内容（用于日志记录和后台任务检测）
     // 策略：反向遍历，首先筛选出所有角色为 "user" 的消息，然后从中找到第一条非 "Warmup" 且非空的文本消息
+    // 获取最新一条“有意义”的消息内容（用于日志记录和后台任务检测）
+    // 策略：反向遍历，首先筛选出所有和用户相关的消息 (role="user")
+    // 然后提取其文本内容，跳过 "Warmup" 或系统预设的 reminder
     let meaningful_msg = request.messages.iter().rev()
         .filter(|m| m.role == "user")
         .find_map(|m| {
             let content = match &m.content {
-                crate::proxy::mappers::claude::models::MessageContent::String(s) => s.as_str(),
+                crate::proxy::mappers::claude::models::MessageContent::String(s) => s.to_string(),
                 crate::proxy::mappers::claude::models::MessageContent::Array(arr) => {
-                    arr.iter().find_map(|block| match block {
-                        crate::proxy::mappers::claude::models::ContentBlock::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    }).unwrap_or("")
+                    // 对于数组，提取所有 Text 块并拼接，忽略 ToolResult
+                    arr.iter()
+                        .filter_map(|block| match block {
+                            crate::proxy::mappers::claude::models::ContentBlock::Text { text } => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
                 }
             };
             
-            if content.trim().starts_with("Warmup") || content.is_empty() || content.contains("<system-reminder>") {
+            // 过滤规则：
+            // 1. 忽略空消息
+            // 2. 忽略 "Warmup" 消息
+            // 3. 忽略 <system-reminder> 标签的消息
+            if content.trim().is_empty() 
+                || content.starts_with("Warmup") 
+                || content.contains("<system-reminder>") 
+            {
                 None 
             } else {
                 Some(content)
             }
         });
 
-    // 如果找不到“有意义”的用户消息，就回退到显示全量消息列表中的最后一条原始消息（哪怕是 Warmup 或来自 assistant）
+    // 如果经过过滤还是找不到（例如纯工具调用），则回退到最后一条消息的原始展示
     let latest_msg = meaningful_msg.unwrap_or_else(|| {
-        request.messages.last().map(|m| match &m.content {
-            crate::proxy::mappers::claude::models::MessageContent::String(s) => s.as_str(),
-            crate::proxy::mappers::claude::models::MessageContent::Array(arr) => {
-                arr.iter().find_map(|block| match block {
-                    crate::proxy::mappers::claude::models::ContentBlock::Text { text } => Some(text.as_str()),
-                    _ => None,
-                }).unwrap_or("[No Text Block]")
+        request.messages.last().map(|m| {
+            match &m.content {
+                crate::proxy::mappers::claude::models::MessageContent::String(s) => s.clone(),
+                crate::proxy::mappers::claude::models::MessageContent::Array(_) => "[Complex/Tool Message]".to_string()
             }
-        }).unwrap_or("[No Messages]")
+        }).unwrap_or_else(|| "[No Messages]".to_string())
     });
     
     crate::modules::logger::log_info(&format!("Received Claude request for model: {}, content_preview: {:.100}...", request.model, latest_msg));
@@ -107,28 +118,41 @@ pub async fn handle_messages(
         );
 
         // --- 核心优化：智能识别并拦截后台自动请求 ---
+        // --- 核心优化：智能识别与拦截后台自动请求 ---
         // 关键词识别：标题生成、摘要提取、下一步提示建议等
-        let is_background_task = latest_msg.contains("write a 5-10 word title") 
-            || latest_msg.contains("Respond with the title")
-            || latest_msg.contains("Concise summary")
-            || latest_msg.contains("prompt suggestion generator");
+        // [Optimization] 使用更长的预览窗口 (500 chars) 以捕获更具体的意图
+        let preview_msg = latest_msg.chars().take(500).collect::<String>();
+        let is_background_task = preview_msg.contains("write a 5-10 word title") 
+            || preview_msg.contains("Respond with the title")
+            || preview_msg.contains("Concise summary")
+            || preview_msg.contains("prompt suggestion generator");
+
+        // 传递映射后的模型名
+        let mut request_with_mapped = request_for_body.clone();
 
         if is_background_task {
              mapped_model = "gemini-2.5-flash".to_string();
-             tracing::info!("检测到后台自动任务 ({}...)，已智能重定向到廉价节点: {}", 
-                latest_msg.chars().take(200).collect::<String>(), 
+             tracing::info!("[AUTO] 检测到后台自动任务 ({}...)，已智能重定向到廉价节点: {}", 
+                preview_msg,
                 mapped_model
              );
+             // [Optimization] **后台任务净化**: 
+             // 此类任务纯粹为文本处理，绝不需要执行工具。
+             // 强制清空 tools 字段，彻底根除 "Multiple tools" (400) 冲突风险。
+             request_with_mapped.tools = None;
         } else {
-             tracing::info!("检测到正常用户请求 ({}...)，保持原模型: {}", 
-                latest_msg.chars().take(200).collect::<String>(), 
+             // [USER] 标记真实用户请求
+             // [Optimization] 使用 WARN 级别高亮显示用户消息，防止被后台任务日志淹没
+             tracing::warn!("[USER] 检测到用户交互请求 ({}...)，保持原模型: {}", 
+                preview_msg,
                 mapped_model
              );
         }
         
-        // 传递映射后的模型名
-        let mut request_with_mapped = request_for_body.clone();
         request_with_mapped.model = mapped_model;
+
+        // 生成 Trace ID (简单用时间戳后缀)
+        // let _trace_id = format!("req_{}", chrono::Utc::now().timestamp_subsec_millis());
 
         let gemini_body = match transform_claude_request_in(&request_with_mapped, &project_id) {
             Ok(b) => b,
