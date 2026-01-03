@@ -171,7 +171,11 @@ pub fn transform_claude_request_in(
         .thinking
         .as_ref()
         .map(|t| t.type_ == "enabled")
-        .unwrap_or(false);
+        .unwrap_or_else(|| {
+            // [Claude Code v2.0.67+] Default thinking enabled for Opus 4.5
+            // If no thinking config is provided, enable by default for Opus models
+            should_enable_thinking_by_default(&claude_req.model)
+        });
 
     // [NEW FIX] Check if target model supports thinking
     // Only models with "-thinking" suffix or Claude models support thinking
@@ -315,6 +319,31 @@ fn should_disable_thinking_due_to_history(messages: &[Message]) -> bool {
             return false;
         }
     }
+    false
+}
+
+/// Check if thinking mode should be enabled by default for a given model
+///
+/// Claude Code v2.0.67+ enables thinking by default for Opus 4.5 models.
+/// This function determines if the model should have thinking enabled
+/// when no explicit thinking configuration is provided.
+fn should_enable_thinking_by_default(model: &str) -> bool {
+    let model_lower = model.to_lowercase();
+
+    // Enable thinking by default for Opus 4.5 variants
+    if model_lower.contains("opus-4-5") || model_lower.contains("opus-4.5") {
+        tracing::debug!(
+            "[Thinking-Mode] Auto-enabling thinking for Opus 4.5 model: {}",
+            model
+        );
+        return true;
+    }
+
+    // Also enable for explicit thinking model variants
+    if model_lower.contains("-thinking") {
+        return true;
+    }
+
     false
 }
 
