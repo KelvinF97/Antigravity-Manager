@@ -68,6 +68,7 @@ systemctl start antigravity
 
 sleep 3
 if systemctl is-active --quiet antigravity; then
+    IP=$(hostname -I | awk '{print $1}')
     echo ""
     echo "========================================"
     echo "  部署完成！"
@@ -77,15 +78,14 @@ if systemctl is-active --quiet antigravity; then
     echo "  目录: $(pwd)"
     echo "  端口: 8045（需同步账号后生效）"
     echo ""
-    echo "  下一步："
-    echo "  1. 在本地执行 sync.sh 同步账号："
-    echo "     curl -O https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/deploy/sync.sh"
-    echo "     chmod +x sync.sh && ./sync.sh user@$(hostname -I | awk '{print $1}')"
+    echo "  下一步：同步本地账号到服务器"
+    echo "  rsync -avz ~/.antigravity_tools/ root@${IP}:$(pwd)/.antigravity_tools/"
+    echo "  systemctl restart antigravity"
     echo ""
     echo "  常用命令："
-    echo "     systemctl status antigravity    # 查看状态"
-    echo "     systemctl restart antigravity   # 重启服务"
-    echo "     tail -f $(pwd)/logs/app.log     # 查看日志"
+    echo "  systemctl status antigravity    # 状态"
+    echo "  systemctl restart antigravity   # 重启"
+    echo "  tail -f $(pwd)/logs/app.log     # 日志"
     echo ""
 else
     echo "启动失败，查看 $(pwd)/logs/app.log"
