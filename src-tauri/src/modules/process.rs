@@ -702,6 +702,7 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
 }
 
 /// 启动 Antigravity
+#[allow(unused_mut)]
 pub fn start_antigravity() -> Result<(), String> {
     crate::modules::logger::log_info("正在启动 Antigravity...");
 
@@ -712,8 +713,8 @@ pub fn start_antigravity() -> Result<(), String> {
         .and_then(|c| c.antigravity_executable.clone());
     let args = config.and_then(|c| c.antigravity_args.clone());
 
-    if let Some(#[allow(unused_mut)] mut path_str) = manual_path {
-        let #[allow(unused_mut)] mut path = std::path::PathBuf::from(&path_str);
+    if let Some(mut path_str) = manual_path {
+        let mut path = std::path::PathBuf::from(&path_str);
 
         #[cfg(target_os = "macos")]
         {
